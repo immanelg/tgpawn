@@ -6,12 +6,12 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-anyhow = "1.0.81"
-env_logger = { version = "0.11.3", default-features = false, features = ["color", "auto-color"] }
-futures-util = "0.3.30"
+anyhow = "1"
+env_logger = { version = "0.11", default-features = false, features = ["color", "auto-color"] }
+futures-util = "0.3"
 grammers-client = "0.5.0"
 grammers-session = "0.5.1"
-log = "0.4.21"
-shakmaty = "0.26.0"
-sqlx = { version = "0.7.4", default-features = false, features = ["sqlite", "migrate"] }
-tokio = { version = "1.36.0", features = ["signal"] }
+log = "0.4"
+shakmaty = "0.26"
+sqlx = { version = "0.7", default-features = false, features = ["sqlite", "migrate", "macros", "runtime-tokio"] }
+tokio = { version = "1.36", features = ["signal"] }
