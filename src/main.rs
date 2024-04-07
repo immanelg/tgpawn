@@ -14,8 +14,7 @@ use std::pin::pin;
 use std::{collections::HashMap, env};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tokio::{runtime, task};
-
-const SESSION_FILE: &str = "app.session";
+use std::env::var;
 
 const STARTING_FEN: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 
@@ -273,29 +272,31 @@ async fn handle_update(state: &mut State, update: Update) -> Result<()> {
 async fn async_main() -> Result<()> {
     env_logger::init();
 
-    let api_id = env!("TG_API_ID").parse().expect("api id invalid");
-    let api_hash = env!("TG_API_HASH").to_string();
-    let token = env!("TG_BOT_TOKEN").to_string();
+    let api_id = env::var("TG_API_ID").expect("need TG_API_ID env var").parse().expect("api id invalid");
+    let api_hash = env::var("TG_API_HASH").expect("need TG_API_HASH env var").to_string();
+    let token = env::var("TG_BOT_TOKEN").expect("need TG_BOT_TOKEN env var").to_string();
+
+    let session_file = env::var("SESSION_FILE").expect("need SESSION_FILE env var").to_string();
+    let database_url = env::var("DATABASE_URL").expect("need DATABASE_URL env var").to_string();
 
     info!("startup");
 
-    const DATABASE_URL: &str = "database.sqlite3";
-
     use sqlx::migrate::MigrateDatabase;
 
-    if !Sqlite::database_exists(DATABASE_URL).await? {
-        info!("create database {}", DATABASE_URL);
-        Sqlite::create_database(DATABASE_URL).await?;
+    if !Sqlite::database_exists(&database_url).await? {
+        info!("create database {}", &database_url);
+        Sqlite::create_database(&database_url).await?;
     }
 
-    let db = SqlitePool::connect(DATABASE_URL).await?;
+    info!("connect to db");
+    let db = SqlitePool::connect(&database_url).await?;
     db.execute(include_str!("./schema.sql")).await?;
 
     let mut boards = HashMap::<i64, Chess>::new();
 
     info!("connecting to Telegram");
     let client = Client::connect(Config {
-        session: Session::load_file_or_create(SESSION_FILE)?,
+        session: Session::load_file_or_create(&session_file)?,
         api_id,
         api_hash: api_hash.clone(),
         params: InitParams {
@@ -307,7 +308,7 @@ async fn async_main() -> Result<()> {
 
     if !client.is_authorized().await? {
         client.bot_sign_in(&token).await?;
-        client.session().save_to_file(SESSION_FILE)?;
+        client.session().save_to_file(&session_file)?;
         info!("signed in");
     }
 
@@ -334,7 +335,7 @@ async fn async_main() -> Result<()> {
     }
 
     info!("exiting");
-    state.client.session().save_to_file(SESSION_FILE)?;
+    state.client.session().save_to_file(&session_file)?;
 
     Ok(())
 }
