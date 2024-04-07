@@ -18,7 +18,6 @@ const SESSION_FILE: &str = "app.session";
 
 const STARTING_FEN: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 
-#[repr(i64)]
 enum Termination {
     Timeout = 0,
     Resign = 1,
