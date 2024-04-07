@@ -196,6 +196,8 @@ async fn on_move(state: &mut State, user_id: i64, notation: &str) -> Result<()> 
     .execute(&mut *tx)
     .await?;
 
+    tx.commit().await?;
+
     for &c in [packed_chat(w_id), packed_chat(b_id)].iter() {
         // show fen image
         state
@@ -248,12 +250,6 @@ async fn handle_update(state: &mut State, update: Update) -> Result<()> {
                 .await?;
 
             debug!("insert user {user_id}");
-
-            let maybe_playing_game: Option<(i64, i64, i64, bool, i64, String)> = sqlx::query_as(
-                "select id, w_id, b_id, winner, termination, fen from games where (w_id = $1 or b_id = $1) and ended = 0",
-            ).bind(user_id).fetch_optional(&state.db).await?;
-
-            debug!("get ongoing game for {user_id}: got {maybe_playing_game:?}");
 
             match text.as_ref() {
                 "/start" => {
