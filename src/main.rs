@@ -41,24 +41,31 @@ fn packed_chat(id: i64) -> PackedChat {
 }
 
 fn parse_move(notation: &str, board: &impl Position) -> Option<Move> {
-    let m = San::from_ascii(notation.as_bytes())
+    if let Some(m) = San::from_ascii(notation.as_bytes())
         .ok()
-        .and_then(|san| san.to_move(board).ok());
-    if m.is_some() {
-        return m;
+        .and_then(|san| san.to_move(board).ok())
+    {
+        return Some(m);
     }
+
     Uci::from_ascii(notation.as_bytes())
         .ok()
         .and_then(|uci| uci.to_move(board).ok())
 }
 
 async fn on_start(state: &mut State, user_id: i64) -> Result<()> {
-    // TODO: accept initial position?
-    // TODO: ratings?
+    let maybe_playing_game: Option<(i64, i64, i64, bool, i64, String)> = sqlx::query_as(
+        "select id, w_id, b_id, winner, termination, fen from games where (w_id = $1 or b_id = $1) and ended = 0",
+    ).bind(user_id).fetch_optional(&state.db).await?;
+
     if maybe_playing_game.is_some() {
         debug!("already in game {user_id}");
-        state.client
-            .send_message(packed_chat(user_id), "You are already playing. Type `resign` to leave.")
+        state
+            .client
+            .send_message(
+                packed_chat(user_id),
+                "You are already playing. Type `resign` to leave.",
+            )
             .await?;
         return Ok(());
     };
@@ -76,24 +83,27 @@ async fn on_start(state: &mut State, user_id: i64) -> Result<()> {
             }
         };
         let (_id, w_id, b_id) = sqlx::query_as::<_, (i64, i64, i64)>(
-            "update games set w_id = $1, b_id = $2 where games.id = $3 returning id, w_id, b_id"
+            "update games set w_id = $1, b_id = $2 where games.id = $3 returning id, w_id, b_id",
         )
-            .bind(w_id)
-            .bind(b_id)
-            .bind(id)
-            .fetch_one(&state.db)
+        .bind(w_id)
+        .bind(b_id)
+        .bind(id)
+        .fetch_one(&state.db)
         .await?;
         let (white, black) = (packed_chat(w_id), packed_chat(b_id));
-        state.client
+        state
+            .client
             .send_message(white, "You are white. Your turn!")
-        .await?;
-        state.client
+            .await?;
+        state
+            .client
             .send_message(black, "You are black. Waiting for opponent's move.")
-        .await?;
+            .await?;
     } else {
         let (id,) = sqlx::query_as::<_, (i64,)>("insert into games (w_id, b_id, winner, ended, fen) values ($1, null, null, 0, $2) returning id").bind(user_id).bind(STARTING_FEN).fetch_one(&state.db).await?;
         debug!("create new game {id}");
-        state.client
+        state
+            .client
             .send_message(
                 packed_chat(user_id),
                 "Created a new game. Waiting for an opponent to join.",
@@ -103,10 +113,16 @@ async fn on_start(state: &mut State, user_id: i64) -> Result<()> {
     Ok(())
 }
 
-async fn on_move(state: &mut State,user_id: i64, notation: &str ) -> Result<()> {
-    let Some((id, w_id, b_id, _winner, _termination, fen)) = maybe_playing_game
-    else {
-        state.client
+async fn on_move(state: &mut State, user_id: i64, notation: &str) -> Result<()> {
+    let maybe_playing_game: Option<(i64, i64, i64, bool, i64, String)> = sqlx::query_as(
+        "select id, w_id, b_id, winner, termination, fen from games where (w_id = $1 or b_id = $1) and ended = 0",
+    ).bind(user_id).fetch_optional(&state.db).await?;
+
+    debug!("get ongoing game for {user_id}: got {maybe_playing_game:?}");
+
+    let Some((id, w_id, b_id, _winner, _termination, fen)) = maybe_playing_game else {
+        state
+            .client
             .send_message(packed_chat(user_id), "Type `start` to join a game")
             .await?;
         return Ok(());
@@ -117,27 +133,34 @@ async fn on_move(state: &mut State,user_id: i64, notation: &str ) -> Result<()> 
             .into_position(CastlingMode::Standard)
             .expect("valid initial position")
     });
-    if !(board.turn() == Color::White && user_id == w_id || board.turn() == Color::Black && user_id == b_id) {
-        state.client.send_message(packed_chat(user_id), "Not your turn!").await?;
+    if !(board.turn() == Color::White && user_id == w_id
+        || board.turn() == Color::Black && user_id == b_id)
+    {
+        state
+            .client
+            .send_message(packed_chat(user_id), "Not your turn!")
+            .await?;
         return Ok(());
     }
     let Some(m) = parse_move(notation, board) else {
-        state.client
+        state
+            .client
             .send_message(packed_chat(user_id), "This is not a valid move")
-        .await?;
+            .await?;
         return Ok(());
     };
     if !board.is_legal(&m) {
-        state.client.send_message(packed_chat(user_id), "This move is not legal").await?;
+        state
+            .client
+            .send_message(packed_chat(user_id), "This move is not legal")
+            .await?;
         return Ok(());
     }
-    board.play_unchecked(&m); 
+    board.play_unchecked(&m);
     debug!("playing move {m}");
 
     let ended = board.is_game_over();
-    let fen =
-    Fen::from_position(board.clone(), shakmaty::EnPassantMode::Always)
-        .to_string();
+    let fen = Fen::from_position(board.clone(), shakmaty::EnPassantMode::Always).to_string();
     let winner = if ended {
         Some(if board.turn().is_white() { w_id } else { b_id })
     } else {
@@ -161,19 +184,27 @@ async fn on_move(state: &mut State,user_id: i64, notation: &str ) -> Result<()> 
         .execute(&state.db).await?;
 
     sqlx::query(
-        "update games set ended = $1, winner = $2, termination = $3, fen = $4 where id = $1")
-        .bind(ended)
-        .bind(winner)
-        .bind(termination)
-        .bind(&fen)
-        .bind(id)
-        .execute(&state.db).await?;
+        "update games set ended = $1, winner = $2, termination = $3, fen = $4 where id = $1",
+    )
+    .bind(ended)
+    .bind(winner)
+    .bind(termination)
+    .bind(&fen)
+    .bind(id)
+    .execute(&state.db)
+    .await?;
 
     for &c in [packed_chat(w_id), packed_chat(b_id)].iter() {
         // show fen image
-        state.client.send_message(packed_chat(user_id), format!("Played {m}, FEN is now {fen}")).await?;
+        state
+            .client
+            .send_message(c, format!("Played {m}, FEN is now {fen}"))
+            .await?;
         if ended {
-            state.client.send_message(packed_chat(user_id), format!("Game is over")).await?;
+            state
+                .client
+                .send_message(packed_chat(user_id), format!("Game is over"))
+                .await?;
         }
     }
     if ended {
@@ -183,6 +214,12 @@ async fn on_move(state: &mut State,user_id: i64, notation: &str ) -> Result<()> 
 }
 
 async fn on_resign(state: &mut State, user_id: i64) -> Result<()> {
+    let maybe_playing_game: Option<(i64, i64, i64, bool, i64, String)> = sqlx::query_as(
+        "select id, w_id, b_id, winner, termination, fen from games where (w_id = $1 or b_id = $1) and ended = 0",
+    ).bind(user_id).fetch_optional(&state.db).await?;
+
+    debug!("get ongoing game for {user_id}: got {maybe_playing_game:?}");
+
     if let Some(_) = maybe_playing_game {
         error!("todo: resign");
     } else {
@@ -206,7 +243,7 @@ async fn handle_update(state: &mut State, update: Update) -> Result<()> {
             sqlx::query("insert or ignore into users (id) values ($1)")
                 .bind(user_id)
                 .execute(&state.db)
-            .await?;
+                .await?;
 
             debug!("insert user {user_id}");
 
@@ -217,24 +254,23 @@ async fn handle_update(state: &mut State, update: Update) -> Result<()> {
             debug!("get ongoing game for {user_id}: got {maybe_playing_game:?}");
 
             match text.as_ref() {
-                "start" => {
+                "/start" => {
                     on_start(state, user_id).await?;
                 }
-                "resign" => {
+                "/resign" => {
                     on_resign(state, user_id).await?;
                 }
                 notation => {
-                    on_move(state, user_id, notation ).await?;
+                    on_move(state, user_id, notation).await?;
                 }
             }
         }
         _ => {
-            info!("unhandled update {update:?}");
+            debug!("unhandled update {update:?}");
         }
     }
     Ok(())
 }
-
 
 async fn async_main() -> Result<()> {
     env_logger::init();
@@ -265,7 +301,7 @@ async fn async_main() -> Result<()> {
         api_id,
         api_hash: api_hash.clone(),
         params: InitParams {
-            catch_up: true,
+            catch_up: false,
             ..Default::default()
         },
     })
@@ -277,16 +313,12 @@ async fn async_main() -> Result<()> {
         info!("signed in");
     }
 
-    let mut state = State {
-        client,
-        db,
-        boards,
-    };
+    let mut state = State { client, db, boards };
 
     info!("waiting for messages");
 
     loop {
-        let update = match client.next_update().await {
+        let update = match state.client.next_update().await {
             Ok(u) => u,
             Err(e) => {
                 error!("cannot get update: {}", e);
@@ -298,10 +330,9 @@ async fn async_main() -> Result<()> {
                 if let Err(e) = handle_update(&mut state, update).await {
                     error!("error while handling update {e}");
                 }
-            },
+            }
             None => break,
         }
-
     }
 
     info!("exiting");
