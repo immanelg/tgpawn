@@ -114,9 +114,11 @@ async fn on_start(state: &mut State, user_id: i64) -> Result<()> {
 }
 
 async fn on_move(state: &mut State, user_id: i64, notation: &str) -> Result<()> {
+    let mut tx = state.db.begin().await?;
+
     let maybe_playing_game: Option<(i64, i64, i64, bool, i64, String)> = sqlx::query_as(
         "select id, w_id, b_id, winner, termination, fen from games where (w_id = $1 or b_id = $1) and ended = 0",
-    ).bind(user_id).fetch_optional(&state.db).await?;
+    ).bind(user_id).fetch_optional(&mut *tx).await?;
 
     debug!("get ongoing game for {user_id}: got {maybe_playing_game:?}");
 
@@ -181,7 +183,7 @@ async fn on_move(state: &mut State, user_id: i64, notation: &str) -> Result<()> 
     )
         .bind(id)
         .bind(m.to_uci(CastlingMode::Standard).to_string())
-        .execute(&state.db).await?;
+        .execute(&mut *tx).await?;
 
     sqlx::query(
         "update games set ended = $1, winner = $2, termination = $3, fen = $4 where id = $1",
@@ -191,7 +193,7 @@ async fn on_move(state: &mut State, user_id: i64, notation: &str) -> Result<()> 
     .bind(termination)
     .bind(&fen)
     .bind(id)
-    .execute(&state.db)
+    .execute(&mut *tx)
     .await?;
 
     for &c in [packed_chat(w_id), packed_chat(b_id)].iter() {
